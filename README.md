@@ -29,4 +29,4 @@ The launcher checks for updates every time it opens, and rebuilds the game autom
 | `patcher-py/` | The same patcher in Python, byte-identical output (Mac/Linux). |
 | `launcher/` | The launcher (C#/WPF, .NET Framework 4.8). |
 
-To release: update `CHANGES.md`, then push a tag such as `v1.3.0`. GitHub Actions builds both programs and publishes the release, and every launcher picks it up on next start.
+To release: update `CHANGES.md` and bump the number in `VERSION` (for example `1.2.0`), then push to `main`. GitHub Actions builds both programs and publishes the release, and every launcher picks it up the next time it opens.
