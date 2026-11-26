@@ -53,3 +53,14 @@ decoded and in-game testing.
 4. Rewrite scene tails: remove choices, chain BL's last scene into VS3's first.
 5. First playable test: Story Mode starts at BL mission 1 inside VS3.
 6. Difficulty curve via enemy settings per mission.
+
+## Test log
+### Test 1 (test-1): BL scene/mission 000 in VS3 slot 002 - PASSED
+- Path: Mission Mode > New Game > Normal > opening scene > "Don't take tutorial" > slot 002.
+- BL English dialogue displays correctly from the merged text.BIN (messages 4000+). No text limit hit.
+- BL backgrounds display correctly (same background numbering).
+- Map Info shows BL mission: "Who is it?", Empire Development Base, BL map, win/lose conditions, enemy Atak Kat Noir with model + weapons.
+- Battle starts on BL's stage with a 10:00 timer and the enemy on radar.
+- PROBLEM: character portraits are wrong (BL charL/charR numbers point at different VS3 characters).
+  Needs a BL -> VS3 portrait remap table (and BL portrait files copied in where VS3 lacks them).
+- Note: VS3 has a Normal/Easy difficulty select at New Game.
