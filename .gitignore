@@ -1,0 +1,7 @@
+bin/
+obj/
+target/
+*.iso
+*.gcm
+*.rvz
+__pycache__/

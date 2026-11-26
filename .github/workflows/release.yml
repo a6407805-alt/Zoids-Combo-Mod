@@ -1,0 +1,33 @@
+name: release
+on:
+  push:
+    tags: ['v*']
+permissions:
+  contents: write
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Version from tag
+        shell: bash
+        run: echo "VER=${GITHUB_REF_NAME#v}" >> $GITHUB_ENV
+      - name: Build patcher
+        working-directory: patcher-rs
+        shell: bash
+        run: |
+          rm -rf .cargo   # cross-compile config is only for Linux builds
+          cargo build --release
+          cp target/release/zoids_combo_patch.exe ../ZoidsComboPatcher.exe
+      - name: Build launcher
+        working-directory: launcher
+        run: |
+          dotnet build -c Release -p:Version=${{ env.VER }}
+          copy bin\Release\net48\ZoidsComboLauncher.exe ..\ZoidsComboLauncher.exe
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            ZoidsComboPatcher.exe
+            ZoidsComboLauncher.exe
+          body_path: CHANGES.md
