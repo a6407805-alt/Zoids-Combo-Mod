@@ -1,2 +1,2 @@
-- Launcher: new "Get test builds" checkbox for trying unfinished features.
+- Launcher: test builds are picked correctly.
 - Game unchanged from v1.1.0.

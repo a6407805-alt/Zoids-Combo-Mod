@@ -285,8 +285,11 @@ namespace ZoidsComboLauncher
                     if (Cfg.Get("testBuilds") == "1")
                     {
                         // newest release of any kind, including test builds (prereleases)
-                        var list = ser.Deserialize<System.Collections.ArrayList>(await h.GetStringAsync($"https://api.github.com/repos/{Cfg.Repo}/releases?per_page=5"));
-                        rel = (Dictionary<string, object>)list[0];
+                        var list = ser.Deserialize<System.Collections.ArrayList>(await h.GetStringAsync($"https://api.github.com/repos/{Cfg.Repo}/releases?per_page=30"))
+                            .Cast<Dictionary<string, object>>().ToList();
+                        // newest test build (tag test-N) by number; fall back to the newest release
+                        int TestNum(Dictionary<string, object> r) { var t = r["tag_name"] as string ?? ""; return t.StartsWith("test-") && int.TryParse(t.Substring(5), out var n) ? n : -1; }
+                        rel = list.Where(r => TestNum(r) >= 0).OrderByDescending(TestNum).FirstOrDefault() ?? list[0];
                         Log("Test builds are ON.");
                     }
                     else
