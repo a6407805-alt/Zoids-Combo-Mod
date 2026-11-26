@@ -72,7 +72,7 @@ namespace ZoidsComboLauncher
         readonly TextBlock status = new TextBlock();
         readonly TextBox log = new TextBox();
         readonly TextBlock vs3Label = new TextBlock(), blLabel = new TextBlock(), dolLabel = new TextBlock(), verLabel = new TextBlock();
-        readonly Button play = new Button(), rebuild = new Button();
+        readonly Button play = new Button(), playBl = new Button(), rebuild = new Button();
         readonly ProgressBar bar = new ProgressBar();
         static readonly Brush Bg = new SolidColorBrush(Color.FromRgb(0x16, 0x1B, 0x26));
         static readonly Brush Panel = new SolidColorBrush(Color.FromRgb(0x22, 0x2A, 0x3A));
@@ -85,7 +85,7 @@ namespace ZoidsComboLauncher
         public MainWindow()
         {
             Title = "Zoids Combo Launcher";
-            Width = 640; Height = 560; Background = Bg; WindowStartupLocation = WindowStartupLocation.CenterScreen;
+            Width = 640; Height = 640; Background = Bg; WindowStartupLocation = WindowStartupLocation.CenterScreen;
             ResizeMode = ResizeMode.CanMinimize;
 
             var root = new StackPanel { Margin = new Thickness(18) };
@@ -104,12 +104,17 @@ namespace ZoidsComboLauncher
             root.Children.Add(bar);
 
             var buttons = new WrapPanel { Margin = new Thickness(0, 12, 0, 8) };
-            StyleButton(play, "▶  PLAY", 180, true); play.Click += async (a, b) => await PlayAsync();
+            StyleButton(play, "▶  VS. III COMBO", 230, true); play.Click += async (a, b) => await PlayAsync();
+            StyleButton(playBl, "▶  BATTLE LEGENDS CAMPAIGN", 290, true); playBl.Click += (a, b) => PlayBattleLegends();
             StyleButton(rebuild, "Rebuild game", 120); rebuild.Click += async (a, b) => await BuildAsync(true);
             var online = new Button(); StyleButton(online, "Play online…", 110); online.Click += (a, b) => OnlineHelp();
             var folder = new Button(); StyleButton(folder, "Game folder", 105);
             folder.Click += (a, b) => { Directory.CreateDirectory(Cfg.GameDir); Process.Start("explorer.exe", "\"" + Cfg.GameDir + "\""); };
-            buttons.Children.Add(play); buttons.Children.Add(rebuild); buttons.Children.Add(online); buttons.Children.Add(folder);
+            var modes = new WrapPanel { Margin = new Thickness(0, 12, 0, 0) };
+            modes.Children.Add(play); modes.Children.Add(playBl);
+            root.Children.Add(new TextBlock { Text = "CHOOSE A GAME", Foreground = Brushes.Gray, FontSize = 12, FontWeight = FontWeights.Bold, Margin = new Thickness(0, 12, 0, 0) });
+            root.Children.Add(modes);
+            buttons.Children.Add(rebuild); buttons.Children.Add(online); buttons.Children.Add(folder);
             root.Children.Add(buttons);
 
             log.Height = 150; log.IsReadOnly = true; log.Background = Panel; log.Foreground = Brushes.LightGray; log.BorderThickness = new Thickness(0);
@@ -145,7 +150,7 @@ namespace ZoidsComboLauncher
 
         void Log(string t) => Dispatcher.Invoke(() => { log.AppendText(t + "\n"); log.ScrollToEnd(); });
         void Status(string t) => Dispatcher.Invoke(() => status.Text = t);
-        void Busy(bool on) => Dispatcher.Invoke(() => { busy = on; bar.IsIndeterminate = on; play.IsEnabled = rebuild.IsEnabled = !on; });
+        void Busy(bool on) => Dispatcher.Invoke(() => { busy = on; bar.IsIndeterminate = on; play.IsEnabled = playBl.IsEnabled = rebuild.IsEnabled = !on; });
 
         void Refresh()
         {
@@ -167,8 +172,8 @@ namespace ZoidsComboLauncher
                 await CheckUpdatesAsync();
                 Refresh();
                 if (NeedsBuild() && HaveDiscs()) await BuildAsync(false, alreadyBusy: true);
-                else if (!HaveDiscs()) Status("Pick your two game ISOs above, then press PLAY.");
-                else Status("Ready. Press PLAY.");
+                else if (!HaveDiscs()) Status("Pick your two game ISOs above, then choose a game.");
+                else Status("Ready. Choose a game below.");
             }
             catch (Exception e) { Status("Something went wrong: " + e.Message); Log(e.ToString()); }
             finally { Busy(false); Refresh(); }
@@ -356,7 +361,7 @@ namespace ZoidsComboLauncher
                 Cfg.Set("builtTag", Cfg.Get("patcherTag"));
                 Cfg.Set("builtFrom", Cfg.Get("vs3") + "|" + Cfg.Get("bl"));
                 AddToDolphinGameList();
-                Status(output.ToString().Contains("Netplay-ready") ? "Game built and Netplay-ready. Press PLAY." : "Game built. Press PLAY.");
+                Status(output.ToString().Contains("Netplay-ready") ? "Game built and Netplay-ready. Choose a game below." : "Game built. Choose a game below.");
                 return true;
             }
             finally { if (!alreadyBusy) Busy(false); Refresh(); }
@@ -370,6 +375,17 @@ namespace ZoidsComboLauncher
             if (!File.Exists(dol)) { PickDolphin(); dol = Cfg.Get("dolphin"); if (!File.Exists(dol)) return; }
             Process.Start(new ProcessStartInfo(dol, $"-e \"{Cfg.OutIso}\"") { UseShellExecute = false, WorkingDirectory = Path.GetDirectoryName(dol) });
             Status("Launched in Dolphin. Have fun!");
+        }
+
+        void PlayBattleLegends()
+        {
+            if (busy) return;
+            var bl = Cfg.Get("bl");
+            if (!File.Exists(bl)) { Status("Pick your Battle Legends ISO first (Change… button above)."); return; }
+            var dol = Cfg.Get("dolphin");
+            if (!File.Exists(dol)) { PickDolphin(); dol = Cfg.Get("dolphin"); if (!File.Exists(dol)) return; }
+            Process.Start(new ProcessStartInfo(dol, $"-e \"{bl}\"") { UseShellExecute = false, WorkingDirectory = Path.GetDirectoryName(dol) });
+            Status("Battle Legends launched. Pick Story Mode from its title screen.");
         }
 
         // Adds the game folder to Dolphin's game list so it shows up for NetPlay.
@@ -414,7 +430,7 @@ namespace ZoidsComboLauncher
                 "1. Everyone opens this launcher first so they have the same, up-to-date game.\n" +
                 "2. Everyone joins the same Hamachi network.\n" +
                 "3. Host: in Dolphin, Tools → Start NetPlay… → Host tab. Set Connection Type to \"Direct Connection\", " +
-                "port 2626, pick \"Zoids Combo: Vs. III + Battle Legends\", click Host.\n" +
+                "port 2626, pick \"Zoids Combo: Vs. III + Battle Legends\" (or \"Zoids: Battle Legends\" for the campaign), click Host.\n" +
                 "4. Friends: Tools → Start NetPlay… → Connect tab. Connection Type \"Direct Connection\", " +
                 "IP = the host's Hamachi IPv4 address (right-click the host in Hamachi → Copy IPv4), port 2626, Connect.\n" +
                 "5. Host assigns controller ports, then clicks Start.\n\n" +

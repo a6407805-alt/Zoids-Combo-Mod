@@ -1,3 +1,3 @@
-- New: Zoids Combo Launcher with automatic updates.
+- New: Zoids Combo Launcher with automatic updates and a game-select menu (Vs. III Combo or Battle Legends Campaign).
 - Game shows up in Dolphin as "Zoids Combo: Vs. III + Battle Legends" with its own banner.
 - English pilot bios and battle voices from Battle Legends.
