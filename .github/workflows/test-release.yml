@@ -1,0 +1,32 @@
+name: test-release
+on:
+  push:
+    branches: [main]
+    paths: [TESTVERSION]
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test number
+        shell: bash
+        run: echo "TV=$(tr -d ' \r\n' < TESTVERSION)" >> $GITHUB_ENV
+      - name: Build experimental patcher
+        working-directory: patcher-rs
+        shell: bash
+        run: |
+          rm -rf .cargo
+          cargo build --release --features experimental
+          cp target/release/zoids_combo_patch.exe ../ZoidsComboPatcher.exe
+      - name: Publish test release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: test-${{ env.TV }}
+          name: Test build ${{ env.TV }}
+          prerelease: true
+          make_latest: false
+          files: ZoidsComboPatcher.exe
+          body_path: TESTNOTES.md

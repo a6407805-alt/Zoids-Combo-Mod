@@ -1,5 +1,7 @@
 //! Zoids Combo Patch Kit - standalone build (no Python needed).
 //! Byte-for-byte the same output as zoids_combo_patch.py.
+#[cfg(feature = "experimental")]
+mod story;
 use sha1::{Digest, Sha1};
 use std::collections::HashMap;
 use std::fs::File;
@@ -351,6 +353,22 @@ fn collect(vs3: &mut Disc, bl: &mut Disc, bios: bool, voices: bool) -> io::Resul
         }
         println!("  English voice scripts: {}, voice clips: {}", scripts, clips);
     }
+    #[cfg(feature = "experimental")]
+    {
+        let tp = vs3.find("etc/demo/text.BIN").ok_or_else(|| io::Error::other("VS3 text.BIN missing"))?;
+        let vt = vs3.data(&tp)?;
+        let bp = bl.find("etc/demo/TEXT.BIN").ok_or_else(|| io::Error::other("BL TEXT.BIN missing"))?;
+        let bt = bl.data(&bp)?;
+        let mut gv = |p: &str| -> io::Result<Option<(String, Vec<u8>)>> {
+            match vs3.find(p) { Some(k) => { let d = vs3.data(&k)?; Ok(Some((k, d))) } None => Ok(None) }
+        };
+        let mut gb = |p: &str| -> io::Result<Option<Vec<u8>>> {
+            match bl.find(p) { Some(k) => Ok(Some(bl.data(&k)?)), None => Ok(None) }
+        };
+        let ex = story::experiment(tp, story::Inputs { vs3_text: &vt, bl_text: &bt, get_vs3: &mut gv, get_bl: &mut gb })?;
+        // a later change to the same file replaces an earlier one
+        for (p, d) in ex { ch.retain(|(q, _)| q != &p); ch.push((p, d)); }
+    }
     Ok(ch)
 }
 
@@ -432,7 +450,9 @@ fn run() -> Result<(), String> {
     loop { let k = f.read(&mut buf).map_err(|e| e.to_string())?; if k == 0 { break; } h.update(&buf[..k]); }
     let digest = hex(&h.finalize());
     println!("Done in {}s.  SHA-1: {}", t.elapsed().as_secs(), digest);
-    if !(no_v || no_b || force) {
+    if cfg!(feature = "experimental") {
+        println!("TEST BUILD - for testing only. Compare this SHA-1 with your friends before Netplay.");
+    } else if !(no_v || no_b || force) {
         if digest == EXPECTED_OUT_SHA1 { println!("Matches the reference build - you are Netplay-ready."); }
         else { println!("WARNING: does not match the reference build. Netplay with friends may desync."); }
     } else { println!("Custom options used: compare this SHA-1 with your friends before Netplay."); }

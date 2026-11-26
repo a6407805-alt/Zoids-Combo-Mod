@@ -1,0 +1,1 @@
+Test 1: Story Mode's first real mission (Vs. III scene/mission 002) is replaced by Battle Legends' opening scene and its first mission ("Who is it?"). Checks whether Vs. III can play Battle Legends story content.

@@ -85,7 +85,7 @@ namespace ZoidsComboLauncher
         public MainWindow()
         {
             Title = "Zoids Combo Launcher";
-            Width = 640; Height = 640; Background = Bg; WindowStartupLocation = WindowStartupLocation.CenterScreen;
+            Width = 640; Height = 680; Background = Bg; WindowStartupLocation = WindowStartupLocation.CenterScreen;
             ResizeMode = ResizeMode.CanMinimize;
 
             var root = new StackPanel { Margin = new Thickness(18) };
@@ -120,6 +120,13 @@ namespace ZoidsComboLauncher
             log.Height = 150; log.IsReadOnly = true; log.Background = Panel; log.Foreground = Brushes.LightGray; log.BorderThickness = new Thickness(0);
             log.FontFamily = new FontFamily("Consolas"); log.FontSize = 11; log.VerticalScrollBarVisibility = ScrollBarVisibility.Auto; log.TextWrapping = TextWrapping.Wrap;
             root.Children.Add(log);
+            var test = new CheckBox { Content = "Get test builds (unfinished features, for testing)", Foreground = Brushes.Gray, Margin = new Thickness(0, 8, 0, 0), IsChecked = Cfg.Get("testBuilds") == "1" };
+            test.Click += (a, b) =>
+            {
+                Cfg.Set("testBuilds", test.IsChecked == true ? "1" : "0");
+                MessageBox.Show(this, "Close and reopen the launcher to switch builds.", "Zoids Combo");
+            };
+            root.Children.Add(test);
             verLabel.Foreground = Brushes.Gray; verLabel.FontSize = 11; verLabel.Margin = new Thickness(0, 6, 0, 0);
             root.Children.Add(verLabel);
             Content = root;
@@ -274,8 +281,16 @@ namespace ZoidsComboLauncher
             {
                 using (var h = Http())
                 {
-                    var json = await h.GetStringAsync($"https://api.github.com/repos/{Cfg.Repo}/releases/latest");
-                    rel = new JavaScriptSerializer().Deserialize<Dictionary<string, object>>(json);
+                    var ser = new JavaScriptSerializer();
+                    if (Cfg.Get("testBuilds") == "1")
+                    {
+                        // newest release of any kind, including test builds (prereleases)
+                        var list = ser.Deserialize<System.Collections.ArrayList>(await h.GetStringAsync($"https://api.github.com/repos/{Cfg.Repo}/releases?per_page=5"));
+                        rel = (Dictionary<string, object>)list[0];
+                        Log("Test builds are ON.");
+                    }
+                    else
+                        rel = ser.Deserialize<Dictionary<string, object>>(await h.GetStringAsync($"https://api.github.com/repos/{Cfg.Repo}/releases/latest"));
                 }
             }
             catch (Exception e)
