@@ -34,8 +34,17 @@ One Story Mode, one save, no side select and no branching choices. Battle Legend
 - Battle settings live in `menu/map_info_dat/M###.mg`, one file per mission, numbered like the story scenes.
   Fields seen: map picture (`map_pNN`), title, win/lose condition text, stage (`mNN`), area name and briefing,
   enemy Zoid IDs (`szNNN`) with names and weapons, and a mission label (`MISSION-01`).
-  BL files are 12828 bytes, VS3 files 13056 (228 extra bytes to locate before converting BL -> VS3).
+  BL files are 12828 bytes, VS3 files 13056. All text/unit fields sit at identical offsets in both
+  (unit blocks every 0x24c from 0x5c4, mission label at 0x2a84). After the label is a numeric block
+  (likely positions/markers); VS3 uses only a few bytes past BL's end, so BL -> VS3 is mostly zero-padding.
 - BL has 46 mission files, VS3 has 34.
+
+## Scene tails (decoded so far)
+Tails are lists of route/flag records, not plain "next scene" pointers:
+`fffc chapter route flag scene 9999 ... eeee` marks which route a scene belongs to;
+`fffe ... 7777 ... cccc` is a choice; `fffd ... 8888 ... dddd` an alternate. The engine picks the next
+scene from these flags plus code (`ttl_demoflagset`, `calcEndMission`), so reordering needs that logic
+decoded and in-game testing.
 
 ## Build steps
 1. Convert BL `M###.mg` to the VS3 layout.
