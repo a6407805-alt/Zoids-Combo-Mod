@@ -31,4 +31,16 @@ One Story Mode, one save, no side select and no branching choices. Battle Legend
 - Tail `fffc ...` = continue; `fffe a A ... 7777 b B ... cccc` = choice (A -> scene A, B -> scene B); `fffd ... 8888 ... dddd` = alternate branch.
 - `etc/demo/TEXT.BIN`: u32 offset table (count = first offset / 4), then strings back to back.
 - BL's English scripts are already on the VS3 disc in `etc/demo_US/`.
-- Battle settings (stage, enemies, win condition) are NOT in the scripts: still to be mapped.
+- Battle settings live in `menu/map_info_dat/M###.mg`, one file per mission, numbered like the story scenes.
+  Fields seen: map picture (`map_pNN`), title, win/lose condition text, stage (`mNN`), area name and briefing,
+  enemy Zoid IDs (`szNNN`) with names and weapons, and a mission label (`MISSION-01`).
+  BL files are 12828 bytes, VS3 files 13056 (228 extra bytes to locate before converting BL -> VS3).
+- BL has 46 mission files, VS3 has 34.
+
+## Build steps
+1. Convert BL `M###.mg` to the VS3 layout.
+2. Merge BL story text into VS3 `text.BIN` (append and renumber message IDs).
+3. Renumber BL scenes and missions into an unused range (e.g. 100+) so they don't clash with VS3's 000-074.
+4. Rewrite scene tails: remove choices, chain BL's last scene into VS3's first.
+5. First playable test: Story Mode starts at BL mission 1 inside VS3.
+6. Difficulty curve via enemy settings per mission.
