@@ -73,4 +73,5 @@ In `menu_MissionDemoScrPlay1` (`0x8008D3F0`), `ttl_demoflagset` (`0x8008C280`), 
 - `menu/bgm.dat`: 50 x s16, track number per menu screen. VS3: 48,51,51,52,53,53,49,42,43,53,53. BL: 12,25,24,41,3,7,8,42,43.
 - Track table in main.dol: entry = 0x8013ac60 + 0x6490 + n*0x2c = (u16 group, u16 song, name). VS3 DOL file offset for track 48 is 0x13e930.
 - Same-named tracks differ between the games (only .sam matches), so swaps copy all 6 MusyX files and patch group/song ids.
-- `patcher-rs/src/music.rs` copies BL bgm00c/019/02d/003/008 over VS3 bgm050/053/054/055/051.
+- Test 3 copied BL bgm00c/019/02d/003/008 files over VS3 bgm050/053/054/055/051 and patched ids: music played garbled (BL files are an older MusyX export).
+- Test 4 (current): VS3 already has its own re-exports of the same songs (same numbers/names, matching ids), so `music.rs` only writes BL's menu numbers into VS3's `menu/bgm.dat`.

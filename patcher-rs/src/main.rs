@@ -372,19 +372,10 @@ fn collect(vs3: &mut Disc, bl: &mut Disc, bios: bool, voices: bool) -> io::Resul
         // a later change to the same file replaces an earlier one
         for (p, d) in ex { ch.retain(|(q, _)| q != &p); ch.push((p, d)); }
 
-        // Battle Legends menu music
-        let mut dol = std::mem::take(&mut vs3.dol);
-        let names: Vec<String> = vs3.order.clone();
-        let mut fv = |p: &str| -> Option<String> {
-            let low = p.to_lowercase();
-            names.iter().find(|q| q.to_lowercase() == low).cloned()
-        };
-        let mut fb = |p: &str| -> io::Result<Option<Vec<u8>>> {
-            match bl.find(p) { Some(k) => Ok(Some(bl.data(&k)?)), None => Ok(None) }
-        };
-        let mus = music::apply(&mut dol, &mut fv, &mut fb)?;
-        vs3.dol = dol;
-        for (p, d) in mus { ch.retain(|(q, _)| q != &p); ch.push((p, d)); }
+        // Battle Legends menu music (point Vs. III's menu screens at its copies of BL's menu songs)
+        let bgp = vs3.find("menu/bgm.dat").ok_or_else(|| io::Error::other("menu/bgm.dat missing"))?;
+        let bgd = music::apply(&vs3.data(&bgp)?)?;
+        ch.retain(|(q, _)| q != &bgp); ch.push((bgp, bgd));
     }
     Ok(ch)
 }
