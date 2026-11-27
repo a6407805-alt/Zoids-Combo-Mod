@@ -366,6 +366,7 @@ fn collect(vs3: &mut Disc, bl: &mut Disc, bios: bool, voices: bool) -> io::Resul
             match bl.find(p) { Some(k) => Ok(Some(bl.data(&k)?)), None => Ok(None) }
         };
         let ex = story::experiment(tp, story::Inputs { vs3_text: &vt, bl_text: &bt, get_vs3: &mut gv, get_bl: &mut gb })?;
+        story::patch_dol(&mut vs3.dol)?;
         // a later change to the same file replaces an earlier one
         for (p, d) in ex { ch.retain(|(q, _)| q != &p); ch.push((p, d)); }
     }

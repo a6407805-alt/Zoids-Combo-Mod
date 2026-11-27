@@ -26,9 +26,12 @@ One Story Mode, one save, no side select and no branching choices. Battle Legend
 | 13 | On the Run | VS3 31-36, 41-47 |
 | 14 | Mega Saurer | VS3 37-38, 48-50, 60-61 |
 
-## Script format notes
+## Script & portrait format notes
 - `etc/demo/DEMO_###.BIN`: 22-byte records `[index, charL, faceL, charR, faceR, bg, msg, bgm, -1, 0, 0]`, then a tail.
-- Tail `fffc ...` = continue; `fffe a A ... 7777 b B ... cccc` = choice (A -> scene A, B -> scene B); `fffd ... 8888 ... dddd` = alternate branch.
+  - `charL` / `charR` (`0xFFFF` = `-1` skips): portrait expression sprite index in `menu/demo/demosell00.dat` (NOT `chara/bp/`, which is battle pilot portraits).
+  - `faceL` / `faceR` (`0..5`): animation state (`0` hidden, `1` slide in, `2` stay visible, `3` slide out, `4` fade out, `5` fade in). Both games map `0..5 -> matanim [3, 2, 0, 1, 1, 2]`. Note `char = 0` is a real portrait when `face != 0` (`BL[0]` = Zan, `VS3[0]` = Arrow).
+  - VS3 `demosell00.dat` has 98 `ModelSet`s (`0..97`, all VS3-era characters, facing left in raw texture space; VS3 sets `scale.x = -1` on Left and `+1` on Right). BL `demosell00.dat` has 1 `ModelSet` with 81 child `JObj`s (`0..74` are 75 unique `256x256` `GX_TF_CMPR` war-era portraits facing right in raw texture space; BL sets `scale.x = +1` on Left and `-1` on Right).
+  - Appending `BL[0..74]` as `ModelSet[98..172]` with horizontally mirrored UVs, plus populating `demoPicMan[98..172]` (`0x8014BD14` in `main.dol`, 395 `i32` slots) and `etc/n_Person.dat` names, renders BL portraits and their English nameplates natively in VS3.
 - `etc/demo/TEXT.BIN`: u32 offset table (count = first offset / 4), then strings back to back.
 - BL's English scripts are already on the VS3 disc in `etc/demo_US/`.
 - Battle settings live in `menu/map_info_dat/M###.mg`, one file per mission, numbered like the story scenes.
@@ -39,12 +42,13 @@ One Story Mode, one save, no side select and no branching choices. Battle Legend
   (likely positions/markers); VS3 uses only a few bytes past BL's end, so BL -> VS3 is mostly zero-padding.
 - BL has 46 mission files, VS3 has 34.
 
-## Scene tails (decoded so far)
-Tails are lists of route/flag records, not plain "next scene" pointers:
-`fffc chapter route flag scene 9999 ... eeee` marks which route a scene belongs to;
-`fffe ... 7777 ... cccc` is a choice; `fffd ... 8888 ... dddd` an alternate. The engine picks the next
-scene from these flags plus code (`ttl_demoflagset`, `calcEndMission`), so reordering needs that logic
-decoded and in-game testing.
+## Scene tails & progression (decoded from `zoidR.elf`)
+In `menu_MissionDemoScrPlay1` (`0x8008D3F0`), `ttl_demoflagset` (`0x8008C280`), and `ttlMain` (`0x80063D2C`):
+- `ffff ...` (`-1`): ends `menu_MissionDemo`, returning to Mission Menu / Map Info for `current_mission_no` (`0x8015A938`).
+- `fffe msgA nextDemoA flagIdxA flagValA 7777 msgB nextDemoB flagIdxB flagValB cccc` (`-2`): 2-way choice; calls `ttl_demoflagset(flagIdx, flagVal)` and, if `nextDemo != -1`, immediately loads `DEMO_{nextDemo:03}.BIN` inside the demo player.
+- `fffd 0000 nextDemo flagIdx flagVal 8888 ... dddd` (`-3`): conditional jump; if `flag[flagIdx] == flagVal` and `nextDemo != -1`, immediately loads `DEMO_{nextDemo:03}.BIN`.
+- `fffc w1 w2 flagIdx flagVal 9999 ... eeee` (`-4`): calls `ttl_demoflagset(flagIdx, flagVal)`. When `flagIdx == 1` and `flagVal < 100`, sets `current_mission_no` (`0x8015A938`) = `flagVal`!
+- After winning a mission battle, `ttlMain` (`0x80063D30..0x80063D54`) increments `current_mission_no` by `+1` and plays `DEMO_{current_mission_no:03}.BIN` next. (Note `ttl_demoflagset` checks `< 100` at `0x8008C2E0` / `0x8008C358` — keep in mind for Task 2 when numbering scenes above 74!)
 
 ## Build steps
 1. Convert BL `M###.mg` to the VS3 layout.
