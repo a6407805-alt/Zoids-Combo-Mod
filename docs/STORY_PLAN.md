@@ -76,3 +76,10 @@ In `menu_MissionDemoScrPlay1` (`0x8008D3F0`), `ttl_demoflagset` (`0x8008C280`), 
 - Same-named tracks differ between the games (only .sam matches), so swaps copy all 6 MusyX files and patch group/song ids.
 - Test 3 copied BL bgm00c/019/02d/003/008 files over VS3 bgm050/053/054/055/051 and patched ids: music played garbled (BL files are an older MusyX export).
 - Test 4 (current): VS3 already has its own re-exports of the same songs (same numbers/names, matching ids), so `music.rs` only writes BL's menu numbers into VS3's `menu/bgm.dat`.
+
+## Direction change: Gauntlet (test 6)
+The user dropped the combined story in favour of a roguelike-style tournament: no dialogue, every mission from both games in one run (72 fights), shuffled per run inside 4 difficulty tiers, upgrades between fights, no permadeath.
+- `patcher-rs/src/gauntlet.rs` builds it (experimental): slots 001-072, scene 000 = intro card, scene 073 = champion card using VS3's finale tail.
+- Each fight scene: 1 card record + `fffc 0001 0047 0001 <slot> 9999 0001 0002 0002 0002 eeee ffff <8-word setup block from the mission's original scene> f0f0 ffff`.
+- Run seed: patcher `--seed N`; launcher stores it as `seed` and shows "GAUNTLET RUN CODE". Same seed = byte-identical ISO.
+- The 8-word setup block after `ffff` is still not fully decoded (looks like pilot/zoid/partner + reward data).

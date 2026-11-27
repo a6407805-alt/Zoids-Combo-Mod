@@ -91,7 +91,7 @@ namespace ZoidsComboLauncher
         public MainWindow()
         {
             Title = "Zoids Combo Launcher";
-            Width = 640; Height = 680; Background = Bg; WindowStartupLocation = WindowStartupLocation.CenterScreen;
+            Width = 640; Height = 730; Background = Bg; WindowStartupLocation = WindowStartupLocation.CenterScreen;
             ResizeMode = ResizeMode.CanMinimize;
 
             var root = new StackPanel { Margin = new Thickness(18) };
@@ -121,6 +121,30 @@ namespace ZoidsComboLauncher
             modes.Children.Add(play); modes.Children.Add(playBl);
             root.Children.Add(new TextBlock { Text = "CHOOSE A GAME", Foreground = Brushes.Gray, FontSize = 12, FontWeight = FontWeights.Bold, Margin = new Thickness(0, 12, 0, 0) });
             root.Children.Add(modes);
+
+            // Gauntlet run code: same code = same fight order (needed for NetPlay together)
+            var runPanel = new WrapPanel { Margin = new Thickness(0, 8, 0, 0) };
+            runLabel.Foreground = Fg; runLabel.FontSize = 14; runLabel.VerticalAlignment = VerticalAlignment.Center; runLabel.Margin = new Thickness(0, 0, 12, 6);
+            var newRun = new Button(); StyleButton(newRun, "New Run", 100);
+            newRun.Click += async (a, b) =>
+            {
+                if (busy) return;
+                Cfg.Set("seed", new Random().Next(100000, 999999).ToString());
+                Refresh();
+                await BuildAsync(true);
+            };
+            var enterCode = new Button(); StyleButton(enterCode, "Enter code…", 110);
+            enterCode.Click += async (a, b) =>
+            {
+                if (busy) return;
+                var code = AskCode();
+                if (code == null) return;
+                Cfg.Set("seed", code);
+                Refresh();
+                await BuildAsync(true);
+            };
+            runPanel.Children.Add(runLabel); runPanel.Children.Add(newRun); runPanel.Children.Add(enterCode);
+            root.Children.Add(runPanel);
             buttons.Children.Add(updateBtn); buttons.Children.Add(rebuild); buttons.Children.Add(online); buttons.Children.Add(folder);
             root.Children.Add(buttons);
 
@@ -193,6 +217,7 @@ namespace ZoidsComboLauncher
         {
             string Show(string p) => string.IsNullOrEmpty(p) ? "(not found — click Change…)" : Path.GetFileName(p);
             vs3Label.Text = Show(Cfg.Get("vs3")); blLabel.Text = Show(Cfg.Get("bl")); dolLabel.Text = Show(Cfg.Get("dolphin"));
+            runLabel.Text = "GAUNTLET RUN CODE:  " + Seed() + (Cfg.Get("testBuilds") == "1" ? "" : "   (needs test builds)");
             var tag = Cfg.Get("patcherTag");
             verLabel.Text = $"Launcher v{MyVersion.ToString(3)}   ·   Game patch {(tag == "" ? "not installed" : tag)}   ·   Auto-updates from github.com/{Cfg.Repo}";
         }
@@ -286,10 +311,43 @@ namespace ZoidsComboLauncher
             catch { }
         }
 
+        readonly TextBlock runLabel = new TextBlock();
+
+        static string Seed()
+        {
+            var s = Cfg.Get("seed");
+            if (!ulong.TryParse(s, out _)) { s = new Random().Next(100000, 999999).ToString(); Cfg.Set("seed", s); }
+            return s;
+        }
+
+        static string BuildKey() => Cfg.Get("vs3") + "|" + Cfg.Get("bl") + "|" + Seed();
+
+        string AskCode()
+        {
+            var w = new Window { Title = "Enter run code", Width = 320, Height = 150, Owner = this, WindowStartupLocation = WindowStartupLocation.CenterOwner, ResizeMode = ResizeMode.NoResize, Background = Bg };
+            var p = new StackPanel { Margin = new Thickness(12) };
+            p.Children.Add(new TextBlock { Text = "Your friend's run code:", Foreground = Fg, Margin = new Thickness(0, 0, 0, 6) });
+            var box = new TextBox { FontSize = 16 };
+            p.Children.Add(box);
+            var ok = new Button(); StyleButton(ok, "Use code", 90); ok.Margin = new Thickness(0, 10, 0, 0); ok.IsDefault = true;
+            string result = null;
+            ok.Click += (a, b) =>
+            {
+                var t = box.Text.Trim();
+                if (!ulong.TryParse(t, out _)) { MessageBox.Show(w, "Run codes are numbers only.", "Run code"); return; }
+                result = t; w.Close();
+            };
+            p.Children.Add(ok);
+            w.Content = p;
+            box.Focus();
+            w.ShowDialog();
+            return result;
+        }
+
         bool HaveDiscs() => File.Exists(Cfg.Get("vs3")) && File.Exists(Cfg.Get("bl"));
         bool NeedsBuild() => !File.Exists(Cfg.OutIso) || Cfg.Get("builtTag") != Cfg.Get("patcherTag") ||
                              Cfg.Get("builtStamp") != Cfg.Get("patcherStamp") ||
-                             Cfg.Get("builtFrom") != Cfg.Get("vs3") + "|" + Cfg.Get("bl");
+                             Cfg.Get("builtFrom") != BuildKey();
 
         static bool IsIsoLocked()
         {
@@ -583,7 +641,7 @@ namespace ZoidsComboLauncher
                 Status("Building Zoids Combo from your discs… (about a minute)");
                 Directory.CreateDirectory(Cfg.GameDir);
                 var psi = new ProcessStartInfo(Cfg.PatcherPath,
-                    $"--vs3 \"{Cfg.Get("vs3")}\" --bl \"{Cfg.Get("bl")}\" --out \"{Cfg.OutIso}\"")
+                    $"--vs3 \"{Cfg.Get("vs3")}\" --bl \"{Cfg.Get("bl")}\" --out \"{Cfg.OutIso}\" --seed {Seed()}")
                 { UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true };
                 var output = new StringBuilder();
                 int code = await Task.Run(() =>
@@ -598,7 +656,7 @@ namespace ZoidsComboLauncher
                 if (code != 0) { Status("Build failed — see the log below."); return false; }
                 Cfg.Set("builtTag", Cfg.Get("patcherTag"));
                 Cfg.Set("builtStamp", Cfg.Get("patcherStamp"));
-                Cfg.Set("builtFrom", Cfg.Get("vs3") + "|" + Cfg.Get("bl"));
+                Cfg.Set("builtFrom", BuildKey());
                 SetUpdateHighlight(false);
                 AddToDolphinGameList();
                 Status(output.ToString().Contains("Netplay-ready") ? "Game built and Netplay-ready. Choose a game below." : "Game built. Choose a game below.");

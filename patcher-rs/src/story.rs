@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 //! Experimental combined Story Mode work. Only compiled with `--features experimental`.
 use std::io;
 

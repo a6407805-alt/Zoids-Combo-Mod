@@ -4,6 +4,10 @@
 mod story;
 #[cfg(feature = "experimental")]
 mod music;
+#[cfg(feature = "experimental")]
+mod gauntlet;
+/// Gauntlet run seed (set with --seed).
+static SEED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
 use sha1::{Digest, Sha1};
 use std::collections::HashMap;
 use std::fs::File;
@@ -367,7 +371,12 @@ fn collect(vs3: &mut Disc, bl: &mut Disc, bios: bool, voices: bool) -> io::Resul
         let mut gb = |p: &str| -> io::Result<Option<Vec<u8>>> {
             match bl.find(p) { Some(k) => Ok(Some(bl.data(&k)?)), None => Ok(None) }
         };
-        let ex = story::experiment(tp, story::Inputs { vs3_text: &vt, bl_text: &bt, get_vs3: &mut gv, get_bl: &mut gb })?;
+        let _ = &bt;
+        let seed = SEED.load(std::sync::atomic::Ordering::Relaxed);
+        let mut ex = gauntlet::build(seed, tp, gauntlet::Inputs { vs3_text: &vt, get_vs3: &mut gv, get_bl: &mut gb })?;
+        if let Some((prm_path, prm_data)) = gv("zoid/IDP/zoid_171.prm")? {
+            ex.push((prm_path, story::patch_rayse_tiger_prm(&prm_data)?));
+        }
         story::patch_dol(&mut vs3.dol)?;
         // a later change to the same file replaces an earlier one
         for (p, d) in ex { ch.retain(|(q, _)| q != &p); ch.push((p, d)); }
@@ -399,6 +408,13 @@ fn run() -> Result<(), String> {
             "--no-voices" => no_v = true,
             "--no-bios" => no_b = true,
             "--force" => force = true,
+            "--seed" => {
+                let v = args.next().unwrap_or_default();
+                let n = v.trim().parse::<u64>().map_err(|_| format!("--seed needs a number, got '{}'", v))?;
+                #[cfg(feature = "experimental")]
+                SEED.store(n, std::sync::atomic::Ordering::Relaxed);
+                let _ = n;
+            }
             "-h" | "--help" => { println!("usage: zoids_combo_patch [VS3.iso BL.iso] [--out FILE] [--no-voices] [--no-bios] [--force]"); return Ok(()); }
             _ => discs.push(PathBuf::from(a)),
         }
