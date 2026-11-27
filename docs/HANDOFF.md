@@ -45,3 +45,14 @@ You cannot run the game yourself. Publish a test build, then have the user (or a
 ## Build commands
 - Patcher (Linux cross-compile): `cd patcher-rs && cargo build --release --target x86_64-pc-windows-gnu [--features experimental]` (needs mingw-w64). On Windows just `cargo build --release`.
 - Launcher: `cd launcher && dotnet build -c Release`.
+
+## User requests added later
+### Battle Legends menu music
+The user prefers Battle Legends' menu music and wants it in Zoids Combo's menus.
+- Both games keep music in `audio/bgm/`. Tracks are numbered `BGM001`..`BGM070` (hex digits). Each track is a set of MusyX files: `BGMxxx.son` plus `bgmxxx.h/.poo/.pro/.sam/.sdi`. Loaded via `audio/bgm/%s` and `audio/bgm/%s.son`.
+- BL has 288 files (tracks up to 033); VS3 has 414 (adds 050-070).
+- The menu track is chosen in code (`TeaMenuBGM`, `menudemobgm`). Find which track number each game uses for its menus (disassemble `TeaMenuBGM` and its callers in both `zoidR.elf` files, or compare same-numbered tracks).
+- Simplest approach: copy BL's menu track files over VS3's menu track number in the patcher (all 6 files of the track, from the player's BL disc). Ship as a test build and have the user listen.
+
+### Custom menu
+The user wants a custom menu for Zoids Combo. Ask the user what they want it to look like and which modes it should list before building. Menu art and layout are HSD `.dat` files under `menu/` (try HSDRaw); menu text is in `etc/TXT_Menu.bin` (the fan translation uses ASCII).
