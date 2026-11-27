@@ -8,7 +8,7 @@ use std::fs::File;
 use std::io::{self, BufRead, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 
-const KIT_VERSION: &str = "1.2.1";
+const KIT_VERSION: &str = "1.2.2";
 const VS3_ID: &str = "GZVJDA";
 const VS3_PRINT: &str = "06ed3803292affa5923cf38a067c63c28103563d";
 const BL_ID: &str = "GZSE70";

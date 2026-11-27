@@ -1,2 +1,3 @@
-- Launcher: test builds are picked correctly.
-- Game unchanged from v1.1.0.
+- Launcher: added **Update** button (`↻ Update`) to check for launcher/patch updates and rebuild anytime without reopening.
+- Launcher: fixed self-updating when "Get test builds" is ticked, replaced the fragile `timeout` self-update script with a lock-safe retry loop, added automatic background update polling while open, and made toggling "Get test builds" switch and rebuild immediately.
+- Game unchanged from v1.1.0 (stable NetPlay SHA-1 unchanged).

@@ -23,7 +23,7 @@ import argparse, hashlib, os, re, sys, textwrap, time
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import gcdisc
 
-KIT_VERSION = '1.2.1'
+KIT_VERSION = '1.2.2'
 
 # Content fingerprints of the exact discs this kit was built against.
 VS3_ID, VS3_PRINT = 'GZVJDA', '06ed3803292affa5923cf38a067c63c28103563d'

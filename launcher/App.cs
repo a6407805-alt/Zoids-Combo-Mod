@@ -1,5 +1,5 @@
-// Zoids Combo Launcher - keeps the patcher up to date, builds the combo game
-// from the player's own discs, and launches it in Dolphin.
+// Zoids Combo Launcher - keeps the launcher and patcher up to date, builds the
+// combo game from the player's own discs, and launches it in Dolphin.
 // No game data is ever downloaded: only the patcher and this launcher.
 using System;
 using System.Collections.Generic;
@@ -8,6 +8,7 @@ using System.IO;
 using System.Linq;
 using System.Net;
 using System.Net.Http;
+using System.Net.Http.Headers;
 using System.Reflection;
 using System.Text;
 using System.Threading.Tasks;
@@ -15,6 +16,7 @@ using System.Web.Script.Serialization;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
+using System.Windows.Threading;
 using Microsoft.Win32;
 
 namespace ZoidsComboLauncher
@@ -72,8 +74,10 @@ namespace ZoidsComboLauncher
         readonly TextBlock status = new TextBlock();
         readonly TextBox log = new TextBox();
         readonly TextBlock vs3Label = new TextBlock(), blLabel = new TextBlock(), dolLabel = new TextBlock(), verLabel = new TextBlock();
-        readonly Button play = new Button(), playBl = new Button(), rebuild = new Button();
+        readonly Button play = new Button(), playBl = new Button(), updateBtn = new Button(), rebuild = new Button();
+        readonly CheckBox testBox = new CheckBox();
         readonly ProgressBar bar = new ProgressBar();
+        readonly DispatcherTimer pollTimer = new DispatcherTimer();
         static readonly Brush Bg = new SolidColorBrush(Color.FromRgb(0x16, 0x1B, 0x26));
         static readonly Brush Panel = new SolidColorBrush(Color.FromRgb(0x22, 0x2A, 0x3A));
         static readonly Brush Accent = new SolidColorBrush(Color.FromRgb(0xC8, 0x10, 0x10));
@@ -81,6 +85,8 @@ namespace ZoidsComboLauncher
         bool busy;
 
         static Version MyVersion => Assembly.GetExecutingAssembly().GetName().Version;
+
+        enum UpdateResult { UpToDate, UpdatedPatcher, RestartingLauncher, Failed }
 
         public MainWindow()
         {
@@ -106,6 +112,7 @@ namespace ZoidsComboLauncher
             var buttons = new WrapPanel { Margin = new Thickness(0, 12, 0, 8) };
             StyleButton(play, "▶  VS. III COMBO", 230, true); play.Click += async (a, b) => await PlayAsync();
             StyleButton(playBl, "▶  BATTLE LEGENDS CAMPAIGN", 290, true); playBl.Click += (a, b) => PlayBattleLegends();
+            StyleButton(updateBtn, "↻  Update", 105); updateBtn.Click += async (a, b) => await RunUpdateAsync(manual: true);
             StyleButton(rebuild, "Rebuild game", 120); rebuild.Click += async (a, b) => await BuildAsync(true);
             var online = new Button(); StyleButton(online, "Play online…", 110); online.Click += (a, b) => OnlineHelp();
             var folder = new Button(); StyleButton(folder, "Game folder", 105);
@@ -114,24 +121,33 @@ namespace ZoidsComboLauncher
             modes.Children.Add(play); modes.Children.Add(playBl);
             root.Children.Add(new TextBlock { Text = "CHOOSE A GAME", Foreground = Brushes.Gray, FontSize = 12, FontWeight = FontWeights.Bold, Margin = new Thickness(0, 12, 0, 0) });
             root.Children.Add(modes);
-            buttons.Children.Add(rebuild); buttons.Children.Add(online); buttons.Children.Add(folder);
+            buttons.Children.Add(updateBtn); buttons.Children.Add(rebuild); buttons.Children.Add(online); buttons.Children.Add(folder);
             root.Children.Add(buttons);
 
             log.Height = 150; log.IsReadOnly = true; log.Background = Panel; log.Foreground = Brushes.LightGray; log.BorderThickness = new Thickness(0);
             log.FontFamily = new FontFamily("Consolas"); log.FontSize = 11; log.VerticalScrollBarVisibility = ScrollBarVisibility.Auto; log.TextWrapping = TextWrapping.Wrap;
             root.Children.Add(log);
-            var test = new CheckBox { Content = "Get test builds (unfinished features, for testing)", Foreground = Brushes.Gray, Margin = new Thickness(0, 8, 0, 0), IsChecked = Cfg.Get("testBuilds") == "1" };
-            test.Click += (a, b) =>
+            testBox.Content = "Get test builds (unfinished features, for testing)";
+            testBox.Foreground = Brushes.Gray; testBox.Margin = new Thickness(0, 8, 0, 0);
+            testBox.IsChecked = Cfg.Get("testBuilds") == "1";
+            testBox.Click += async (a, b) =>
             {
-                Cfg.Set("testBuilds", test.IsChecked == true ? "1" : "0");
-                MessageBox.Show(this, "Close and reopen the launcher to switch builds.", "Zoids Combo");
+                Cfg.Set("testBuilds", testBox.IsChecked == true ? "1" : "0");
+                await RunUpdateAsync(manual: true);
             };
-            root.Children.Add(test);
+            root.Children.Add(testBox);
             verLabel.Foreground = Brushes.Gray; verLabel.FontSize = 11; verLabel.Margin = new Thickness(0, 6, 0, 0);
             root.Children.Add(verLabel);
             Content = root;
 
-            Loaded += async (a, b) => await StartupAsync();
+            pollTimer.Interval = TimeSpan.FromMinutes(3);
+            pollTimer.Tick += async (a, b) => await AutoPollTickAsync();
+            Loaded += async (a, b) =>
+            {
+                CleanupOldUpdateFiles();
+                await StartupAsync();
+                pollTimer.Start();
+            };
         }
 
         static void StyleButton(Button b, string text, double w, bool primary = false)
@@ -139,6 +155,16 @@ namespace ZoidsComboLauncher
             b.Content = text; b.MinWidth = w; b.Height = primary ? 44 : 34; b.Margin = new Thickness(0, 0, 8, 6);
             b.FontSize = primary ? 18 : 13; b.FontWeight = primary ? FontWeights.Bold : FontWeights.Normal;
             b.Background = primary ? Accent : Panel; b.Foreground = Fg; b.BorderThickness = new Thickness(0); b.Padding = new Thickness(10, 0, 10, 0);
+        }
+
+        void SetUpdateHighlight(bool hasPending)
+        {
+            Dispatcher.Invoke(() =>
+            {
+                updateBtn.Content = hasPending ? "⬆  Update ready" : "↻  Update";
+                updateBtn.Background = hasPending ? Accent : Panel;
+                updateBtn.FontWeight = hasPending ? FontWeights.Bold : FontWeights.Normal;
+            });
         }
 
         UIElement Row(string name, TextBlock value, Action change)
@@ -157,17 +183,32 @@ namespace ZoidsComboLauncher
 
         void Log(string t) => Dispatcher.Invoke(() => { log.AppendText(t + "\n"); log.ScrollToEnd(); });
         void Status(string t) => Dispatcher.Invoke(() => status.Text = t);
-        void Busy(bool on) => Dispatcher.Invoke(() => { busy = on; bar.IsIndeterminate = on; play.IsEnabled = playBl.IsEnabled = rebuild.IsEnabled = !on; });
+        void Busy(bool on) => Dispatcher.Invoke(() =>
+        {
+            busy = on; bar.IsIndeterminate = on;
+            play.IsEnabled = playBl.IsEnabled = updateBtn.IsEnabled = rebuild.IsEnabled = testBox.IsEnabled = !on;
+        });
 
         void Refresh()
         {
             string Show(string p) => string.IsNullOrEmpty(p) ? "(not found — click Change…)" : Path.GetFileName(p);
             vs3Label.Text = Show(Cfg.Get("vs3")); blLabel.Text = Show(Cfg.Get("bl")); dolLabel.Text = Show(Cfg.Get("dolphin"));
             var tag = Cfg.Get("patcherTag");
-            verLabel.Text = $"Launcher v{MyVersion.ToString(3)}   ·   Game patch {(tag == "" ? "not installed" : tag)}   ·   Updates from github.com/{Cfg.Repo}";
+            verLabel.Text = $"Launcher v{MyVersion.ToString(3)}   ·   Game patch {(tag == "" ? "not installed" : tag)}   ·   Auto-updates from github.com/{Cfg.Repo}";
         }
 
-        // ---------- startup ----------
+        static void CleanupOldUpdateFiles()
+        {
+            try
+            {
+                var me = Assembly.GetExecutingAssembly().Location;
+                foreach (var ext in new[] { ".old", ".new" })
+                    if (File.Exists(me + ext)) File.Delete(me + ext);
+            }
+            catch { }
+        }
+
+        // ---------- startup + update flows ----------
         async Task StartupAsync()
         {
             Busy(true);
@@ -176,9 +217,22 @@ namespace ZoidsComboLauncher
                 AutoFind();
                 Refresh();
                 Status("Checking for updates…");
-                await CheckUpdatesAsync();
+                var res = await CheckUpdatesAsync(quiet: false);
+                if (res == UpdateResult.RestartingLauncher) return;
                 Refresh();
-                if (NeedsBuild() && HaveDiscs()) await BuildAsync(false, alreadyBusy: true);
+                if (NeedsBuild() && HaveDiscs())
+                {
+                    if (IsIsoLocked())
+                    {
+                        SetUpdateHighlight(true);
+                        Status("Update downloaded — close Dolphin and click Update to rebuild.");
+                    }
+                    else
+                    {
+                        await BuildAsync(false, alreadyBusy: true);
+                        SetUpdateHighlight(false);
+                    }
+                }
                 else if (!HaveDiscs()) Status("Pick your two game ISOs above, then choose a game.");
                 else Status("Ready. Choose a game below.");
             }
@@ -186,9 +240,64 @@ namespace ZoidsComboLauncher
             finally { Busy(false); Refresh(); }
         }
 
+        async Task RunUpdateAsync(bool manual)
+        {
+            if (busy) return;
+            Busy(true);
+            try
+            {
+                Status("Checking for updates…");
+                var res = await CheckUpdatesAsync(quiet: false);
+                if (res == UpdateResult.RestartingLauncher) return;
+                Refresh();
+                if (NeedsBuild() && HaveDiscs())
+                {
+                    if (IsIsoLocked())
+                    {
+                        SetUpdateHighlight(true);
+                        Status("Close Dolphin first (Zoids Combo.iso is in use), then click Update.");
+                        return;
+                    }
+                    if (await BuildAsync(false, alreadyBusy: true)) SetUpdateHighlight(false);
+                }
+                else if (res == UpdateResult.UpdatedPatcher && !HaveDiscs())
+                {
+                    SetUpdateHighlight(false);
+                    Status($"Downloaded patch {Cfg.Get("patcherTag")}. Pick your two game ISOs above to build.");
+                }
+                else if (manual && res != UpdateResult.Failed)
+                {
+                    SetUpdateHighlight(false);
+                    Status($"Up to date (Launcher v{MyVersion.ToString(3)}, patch {Cfg.Get("patcherTag")}).");
+                }
+            }
+            catch (Exception e) { Status("Update failed: " + e.Message); Log(e.ToString()); }
+            finally { Busy(false); Refresh(); }
+        }
+
+        async Task AutoPollTickAsync()
+        {
+            if (busy) return;
+            try
+            {
+                if (!await HasRemoteUpdateAsync()) return;
+                await RunUpdateAsync(manual: false);
+            }
+            catch { }
+        }
+
         bool HaveDiscs() => File.Exists(Cfg.Get("vs3")) && File.Exists(Cfg.Get("bl"));
         bool NeedsBuild() => !File.Exists(Cfg.OutIso) || Cfg.Get("builtTag") != Cfg.Get("patcherTag") ||
+                             Cfg.Get("builtStamp") != Cfg.Get("patcherStamp") ||
                              Cfg.Get("builtFrom") != Cfg.Get("vs3") + "|" + Cfg.Get("bl");
+
+        static bool IsIsoLocked()
+        {
+            if (!File.Exists(Cfg.OutIso)) return false;
+            try { using (File.Open(Cfg.OutIso, FileMode.Open, FileAccess.ReadWrite, FileShare.None)) return false; }
+            catch (IOException) { return true; }
+            catch { return false; }
+        }
 
         static string ReadId(string p)
         {
@@ -264,6 +373,8 @@ namespace ZoidsComboLauncher
             ServicePointManager.SecurityProtocol |= SecurityProtocolType.Tls12;
             var h = new HttpClient { Timeout = TimeSpan.FromMinutes(10) };
             h.DefaultRequestHeaders.UserAgent.ParseAdd("ZoidsComboLauncher/" + MyVersion);
+            h.DefaultRequestHeaders.CacheControl = new CacheControlHeaderValue { NoCache = true, NoStore = true };
+            h.DefaultRequestHeaders.Pragma.ParseAdd("no-cache");
             return h;
         }
 
@@ -274,66 +385,173 @@ namespace ZoidsComboLauncher
             return Version.TryParse(t, out var v) ? v : new Version(0, 0, 0);
         }
 
-        async Task CheckUpdatesAsync()
+        static bool IsPrerelease(Dictionary<string, object> r) => r.TryGetValue("prerelease", out var p) && p is bool b && b;
+        static bool IsDraft(Dictionary<string, object> r) => r.TryGetValue("draft", out var d) && d is bool b && b;
+        static int TestNum(Dictionary<string, object> r)
         {
-            Dictionary<string, object> rel;
+            var t = r.TryGetValue("tag_name", out var v) ? v as string ?? "" : "";
+            return t.StartsWith("test-", StringComparison.OrdinalIgnoreCase) && int.TryParse(t.Substring(5), out var n) ? n : -1;
+        }
+
+        static Dictionary<string, Dictionary<string, object>> AssetMap(Dictionary<string, object> rel)
+        {
+            if (rel == null || !rel.TryGetValue("assets", out var raw) || !(raw is System.Collections.ArrayList arr))
+                return new Dictionary<string, Dictionary<string, object>>(StringComparer.OrdinalIgnoreCase);
+            return arr.Cast<Dictionary<string, object>>()
+                .Where(a => a.ContainsKey("name") && a["name"] is string)
+                .GroupBy(a => (string)a["name"], StringComparer.OrdinalIgnoreCase)
+                .ToDictionary(g => g.Key, g => g.First(), StringComparer.OrdinalIgnoreCase);
+        }
+
+        static string AssetStamp(string tag, Dictionary<string, object> asset)
+        {
+            var upd = asset.TryGetValue("updated_at", out var u) ? Convert.ToString(u) : "";
+            var sz = asset.TryGetValue("size", out var s) ? Convert.ToString(s) : "";
+            return $"{tag}|{upd}|{sz}";
+        }
+
+        async Task<(Dictionary<string, object> launcherRel, Dictionary<string, object> patcherRel)> FetchTargetReleasesAsync()
+        {
+            using (var h = Http())
+            {
+                var ser = new JavaScriptSerializer();
+                var json = await h.GetStringAsync($"https://api.github.com/repos/{Cfg.Repo}/releases?per_page=30");
+                var list = ser.Deserialize<System.Collections.ArrayList>(json)
+                    .Cast<Dictionary<string, object>>()
+                    .Where(r => !IsDraft(r))
+                    .ToList();
+
+                // Always check stable releases for launcher self-updates, even when testBuilds == "1".
+                var launcherRel = list
+                    .Where(r => !IsPrerelease(r) && AssetMap(r).ContainsKey(Cfg.LauncherAsset))
+                    .OrderByDescending(r => ParseTag(r["tag_name"] as string))
+                    .FirstOrDefault();
+
+                Dictionary<string, object> patcherRel;
+                if (Cfg.Get("testBuilds") == "1")
+                {
+                    patcherRel = list
+                        .Where(r => TestNum(r) >= 0 && AssetMap(r).ContainsKey(Cfg.PatcherAsset))
+                        .OrderByDescending(TestNum)
+                        .FirstOrDefault()
+                        ?? list.FirstOrDefault(r => AssetMap(r).ContainsKey(Cfg.PatcherAsset));
+                }
+                else
+                {
+                    patcherRel = list
+                        .Where(r => !IsPrerelease(r) && AssetMap(r).ContainsKey(Cfg.PatcherAsset))
+                        .OrderByDescending(r => ParseTag(r["tag_name"] as string))
+                        .FirstOrDefault();
+                }
+                return (launcherRel, patcherRel);
+            }
+        }
+
+        async Task<bool> HasRemoteUpdateAsync()
+        {
+            var (launcherRel, patcherRel) = await FetchTargetReleasesAsync();
+            if (launcherRel != null && ParseTag(launcherRel["tag_name"] as string) > MyVersion) return true;
+            if (patcherRel != null)
+            {
+                var tag = patcherRel["tag_name"] as string ?? "";
+                var assets = AssetMap(patcherRel);
+                if (assets.TryGetValue(Cfg.PatcherAsset, out var pa))
+                {
+                    var stamp = AssetStamp(tag, pa);
+                    if (!File.Exists(Cfg.PatcherPath) || Cfg.Get("patcherTag") != tag ||
+                        (Cfg.Get("patcherStamp") != "" && Cfg.Get("patcherStamp") != stamp))
+                        return true;
+                }
+            }
+            return false;
+        }
+
+        static bool LooksLikeExe(byte[] bytes) => bytes != null && bytes.Length > 16384 && bytes[0] == 'M' && bytes[1] == 'Z';
+
+        async Task<UpdateResult> CheckUpdatesAsync(bool quiet)
+        {
+            Dictionary<string, object> launcherRel, patcherRel;
             try
             {
-                using (var h = Http())
-                {
-                    var ser = new JavaScriptSerializer();
-                    if (Cfg.Get("testBuilds") == "1")
-                    {
-                        // newest release of any kind, including test builds (prereleases)
-                        var list = ser.Deserialize<System.Collections.ArrayList>(await h.GetStringAsync($"https://api.github.com/repos/{Cfg.Repo}/releases?per_page=30"))
-                            .Cast<Dictionary<string, object>>().ToList();
-                        // newest test build (tag test-N) by number; fall back to the newest release
-                        int TestNum(Dictionary<string, object> r) { var t = r["tag_name"] as string ?? ""; return t.StartsWith("test-") && int.TryParse(t.Substring(5), out var n) ? n : -1; }
-                        rel = list.Where(r => TestNum(r) >= 0).OrderByDescending(TestNum).FirstOrDefault() ?? list[0];
-                        Log("Test builds are ON.");
-                    }
-                    else
-                        rel = ser.Deserialize<Dictionary<string, object>>(await h.GetStringAsync($"https://api.github.com/repos/{Cfg.Repo}/releases/latest"));
-                }
+                (launcherRel, patcherRel) = await FetchTargetReleasesAsync();
+                if (!quiet && Cfg.Get("testBuilds") == "1") Log("Test builds are ON.");
             }
             catch (Exception e)
             {
-                Log("Couldn't check for updates (" + e.Message + "). Using what's installed.");
+                if (!quiet) Log("Couldn't check for updates (" + e.Message + "). Using what's installed.");
                 BundledPatcherFallback();
-                return;
+                return UpdateResult.Failed;
             }
-            var tag = rel["tag_name"] as string;
-            var assets = ((System.Collections.ArrayList)rel["assets"]).Cast<Dictionary<string, object>>()
-                .ToDictionary(a => (string)a["name"], a => (string)a["browser_download_url"], StringComparer.OrdinalIgnoreCase);
-            Log($"Latest release: {tag}");
 
-            // 1) launcher self-update
-            if (ParseTag(tag) > MyVersion && assets.TryGetValue(Cfg.LauncherAsset, out var lurl))
+            // 1) Launcher self-update (works regardless of whether test builds are on or off).
+            if (launcherRel != null)
             {
-                Status($"Updating launcher to {tag}…");
-                var me = Assembly.GetExecutingAssembly().Location;
-                var tmp = me + ".new";
-                using (var h = Http()) File.WriteAllBytes(tmp, await h.GetByteArrayAsync(lurl));
-                var bat = Path.Combine(Path.GetTempPath(), "zoidscombo_update.bat");
-                File.WriteAllText(bat, "@echo off\r\ntimeout /t 2 /nobreak >nul\r\n" +
-                    $"move /y \"{tmp}\" \"{me}\" >nul\r\nstart \"\" \"{me}\"\r\ndel \"%~f0\"\r\n");
-                Process.Start(new ProcessStartInfo("cmd.exe", "/c \"" + bat + "\"") { CreateNoWindow = true, UseShellExecute = false });
-                Application.Current.Shutdown();
-                return;
+                var ltag = launcherRel["tag_name"] as string ?? "";
+                var lassets = AssetMap(launcherRel);
+                if (ParseTag(ltag) > MyVersion && lassets.TryGetValue(Cfg.LauncherAsset, out var la))
+                {
+                    var lurl = la["browser_download_url"] as string;
+                    Status($"Updating launcher to {ltag}…");
+                    Log($"New launcher version found ({ltag}). Updating and restarting…");
+                    var me = Assembly.GetExecutingAssembly().Location;
+                    var tmp = me + ".new";
+                    byte[] bytes;
+                    using (var h = Http()) bytes = await h.GetByteArrayAsync(lurl);
+                    if (!LooksLikeExe(bytes)) throw new IOException("Downloaded launcher file was incomplete.");
+                    File.WriteAllBytes(tmp, bytes);
+
+                    // Retry moving into place until our process exits (never use timeout.exe, which
+                    // aborts immediately when CreateNoWindow = true has no console handle).
+                    var bat = Path.Combine(Path.GetTempPath(), "zoidscombo_update.bat");
+                    File.WriteAllText(bat,
+                        "@echo off\r\n" +
+                        "for /L %%i in (1,1,25) do (\r\n" +
+                        $"    move /y \"{tmp}\" \"{me}\" >nul 2>&1\r\n" +
+                        "    if not errorlevel 1 goto launched\r\n" +
+                        "    ping 127.0.0.1 -n 2 >nul\r\n" +
+                        ")\r\n" +
+                        ":launched\r\n" +
+                        $"start \"\" \"{me}\"\r\n" +
+                        "del \"%~f0\"\r\n");
+                    Process.Start(new ProcessStartInfo("cmd.exe", "/c \"" + bat + "\"") { CreateNoWindow = true, UseShellExecute = false });
+                    Application.Current.Shutdown();
+                    return UpdateResult.RestartingLauncher;
+                }
             }
-            // 2) patcher update
-            if ((Cfg.Get("patcherTag") != tag || !File.Exists(Cfg.PatcherPath)) && assets.TryGetValue(Cfg.PatcherAsset, out var purl))
+
+            // 2) Patcher update (stable or newest test-N).
+            if (patcherRel == null)
             {
-                Status($"Downloading game patch {tag}…");
-                Directory.CreateDirectory(Cfg.DataDir);
-                using (var h = Http()) File.WriteAllBytes(Cfg.PatcherPath + ".tmp", await h.GetByteArrayAsync(purl));
-                if (File.Exists(Cfg.PatcherPath)) File.Delete(Cfg.PatcherPath);
-                File.Move(Cfg.PatcherPath + ".tmp", Cfg.PatcherPath);
-                Cfg.Set("patcherTag", tag);
-                Log($"Game patch updated to {tag}.");
-                if (rel.TryGetValue("body", out var notes) && notes is string n && n.Trim() != "") Log("What's new:\n" + n.Trim());
+                BundledPatcherFallback();
+                return UpdateResult.UpToDate;
             }
-            else Log("Game patch is up to date.");
+            var tag = patcherRel["tag_name"] as string ?? "";
+            var assets = AssetMap(patcherRel);
+            if (!quiet) Log($"Latest game patch: {tag}");
+            if (assets.TryGetValue(Cfg.PatcherAsset, out var pa))
+            {
+                var purl = pa["browser_download_url"] as string;
+                var stamp = AssetStamp(tag, pa);
+                bool needDownload = !File.Exists(Cfg.PatcherPath) || Cfg.Get("patcherTag") != tag || Cfg.Get("patcherStamp") != stamp;
+                if (needDownload)
+                {
+                    Status($"Downloading game patch {tag}…");
+                    Directory.CreateDirectory(Cfg.DataDir);
+                    byte[] bytes;
+                    using (var h = Http()) bytes = await h.GetByteArrayAsync(purl);
+                    if (!LooksLikeExe(bytes)) throw new IOException("Downloaded game patch was incomplete.");
+                    File.WriteAllBytes(Cfg.PatcherPath + ".tmp", bytes);
+                    if (File.Exists(Cfg.PatcherPath)) File.Delete(Cfg.PatcherPath);
+                    File.Move(Cfg.PatcherPath + ".tmp", Cfg.PatcherPath);
+                    Cfg.Set("patcherTag", tag);
+                    Cfg.Set("patcherStamp", stamp);
+                    Log($"Game patch updated to {tag}.");
+                    if (patcherRel.TryGetValue("body", out var notes) && notes is string n && n.Trim() != "") Log("What's new:\n" + n.Trim());
+                    return UpdateResult.UpdatedPatcher;
+                }
+            }
+            if (!quiet) Log("Game patch is up to date.");
+            return UpdateResult.UpToDate;
         }
 
         void BundledPatcherFallback()
@@ -346,6 +564,7 @@ namespace ZoidsComboLauncher
                 Directory.CreateDirectory(Cfg.DataDir);
                 File.Copy(bundled, Cfg.PatcherPath, true);
                 Cfg.Set("patcherTag", "bundled");
+                Cfg.Set("patcherStamp", "bundled");
                 Log("Using the patcher that came with the launcher.");
             }
         }
@@ -356,7 +575,8 @@ namespace ZoidsComboLauncher
             if (!alreadyBusy && busy) return false;
             if (!HaveDiscs()) { Status("Pick both game ISOs first (Change… buttons above)."); return false; }
             if (!File.Exists(Cfg.PatcherPath)) BundledPatcherFallback();
-            if (!File.Exists(Cfg.PatcherPath)) { Status("The game patch isn't downloaded yet. Check your internet and reopen the launcher."); return false; }
+            if (!File.Exists(Cfg.PatcherPath)) { Status("The game patch isn't downloaded yet. Check your internet and click Update."); return false; }
+            if (IsIsoLocked()) { Status("Close Dolphin first (Zoids Combo.iso is in use), then click Rebuild."); return false; }
             if (!alreadyBusy) Busy(true);
             try
             {
@@ -377,7 +597,9 @@ namespace ZoidsComboLauncher
                 });
                 if (code != 0) { Status("Build failed — see the log below."); return false; }
                 Cfg.Set("builtTag", Cfg.Get("patcherTag"));
+                Cfg.Set("builtStamp", Cfg.Get("patcherStamp"));
                 Cfg.Set("builtFrom", Cfg.Get("vs3") + "|" + Cfg.Get("bl"));
+                SetUpdateHighlight(false);
                 AddToDolphinGameList();
                 Status(output.ToString().Contains("Netplay-ready") ? "Game built and Netplay-ready. Choose a game below." : "Game built. Choose a game below.");
                 return true;

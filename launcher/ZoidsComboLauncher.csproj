@@ -7,7 +7,7 @@
     <LangVersion>latest</LangVersion>
     <AssemblyName>ZoidsComboLauncher</AssemblyName>
     <RootNamespace>ZoidsComboLauncher</RootNamespace>
-    <Version>1.2.0</Version>
+    <Version>1.2.2</Version>
     <AssemblyTitle>Zoids Combo Launcher</AssemblyTitle>
     <Nullable>disable</Nullable>
   </PropertyGroup>
