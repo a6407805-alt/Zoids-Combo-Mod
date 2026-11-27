@@ -374,10 +374,15 @@ fn collect(vs3: &mut Disc, bl: &mut Disc, bios: bool, voices: bool) -> io::Resul
         let _ = &bt;
         let seed = SEED.load(std::sync::atomic::Ordering::Relaxed);
         let mut ex = gauntlet::build(seed, tp, gauntlet::Inputs { vs3_text: &vt, get_vs3: &mut gv, get_bl: &mut gb })?;
-        if let Some((prm_path, prm_data)) = gv("zoid/IDP/zoid_171.prm")? {
-            ex.push((prm_path, story::patch_rayse_tiger_prm(&prm_data)?));
+        // Test 7: Antigravity's floor clamp + Rayse Tiger prm change are OFF (suspected cause of
+        // "ability drags the Zoid to the arena edge and freezes it"). Flip to true to restore.
+        const FLOOR_FIXES: bool = false;
+        if FLOOR_FIXES {
+            if let Some((prm_path, prm_data)) = gv("zoid/IDP/zoid_171.prm")? {
+                ex.push((prm_path, story::patch_rayse_tiger_prm(&prm_data)?));
+            }
         }
-        story::patch_dol(&mut vs3.dol)?;
+        if FLOOR_FIXES { story::patch_dol(&mut vs3.dol)?; }
         // a later change to the same file replaces an earlier one
         for (p, d) in ex { ch.retain(|(q, _)| q != &p); ch.push((p, d)); }
 
