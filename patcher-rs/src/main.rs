@@ -2,6 +2,8 @@
 //! Byte-for-byte the same output as zoids_combo_patch.py.
 #[cfg(feature = "experimental")]
 mod story;
+#[cfg(feature = "experimental")]
+mod music;
 use sha1::{Digest, Sha1};
 use std::collections::HashMap;
 use std::fs::File;
@@ -369,6 +371,20 @@ fn collect(vs3: &mut Disc, bl: &mut Disc, bios: bool, voices: bool) -> io::Resul
         story::patch_dol(&mut vs3.dol)?;
         // a later change to the same file replaces an earlier one
         for (p, d) in ex { ch.retain(|(q, _)| q != &p); ch.push((p, d)); }
+
+        // Battle Legends menu music
+        let mut dol = std::mem::take(&mut vs3.dol);
+        let names: Vec<String> = vs3.order.clone();
+        let mut fv = |p: &str| -> Option<String> {
+            let low = p.to_lowercase();
+            names.iter().find(|q| q.to_lowercase() == low).cloned()
+        };
+        let mut fb = |p: &str| -> io::Result<Option<Vec<u8>>> {
+            match bl.find(p) { Some(k) => Ok(Some(bl.data(&k)?)), None => Ok(None) }
+        };
+        let mus = music::apply(&mut dol, &mut fv, &mut fb)?;
+        vs3.dol = dol;
+        for (p, d) in mus { ch.retain(|(q, _)| q != &p); ch.push((p, d)); }
     }
     Ok(ch)
 }
