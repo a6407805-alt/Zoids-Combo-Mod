@@ -37,9 +37,10 @@ One Story Mode, one save, no side select and no branching choices. Battle Legend
 - Battle settings live in `menu/map_info_dat/M###.mg`, one file per mission, numbered like the story scenes.
   Fields seen: map picture (`map_pNN`), title, win/lose condition text, stage (`mNN`), area name and briefing,
   enemy Zoid IDs (`szNNN`) with names and weapons, and a mission label (`MISSION-01`).
-  BL files are 12828 bytes, VS3 files 13056. All text/unit fields sit at identical offsets in both
-  (unit blocks every 0x24c from 0x5c4, mission label at 0x2a84). After the label is a numeric block
-  (likely positions/markers); VS3 uses only a few bytes past BL's end, so BL -> VS3 is mostly zero-padding.
+  BL files are 12828 bytes (`0x321C`), VS3 files 13056 (`0x3300`). All text/unit fields sit at identical offsets in both
+  (unit blocks every 0x24c from 0x5c4, mission label at 0x2a84). In VS3's extra `0x321C..0x3300` trailer, `0x3248..0x3258`
+  holds stage altitude limits (`limitHighH` ceiling, `limitHighL` floor, AI flight max/min Y), which `port_mission` populates per stage.
+- **Engine floor-clipping bug (`zdClampFloor` in `test-5`)**: in vanilla VS3, Rayse Tiger (`zoid_171.prm`) has `mode = 0` on its paw spheres and `mode = 1` (overlap-only) on its chest/front legs, and `ZoidGround`'s anti-tunneling segment check at `0x80042FC0` has an empty `if` body. Nose-first dive attacks (`ZoidJump` `anim 65/66`) could cross single-sided `.xb` floor triangles in one frame and fall forever. `patch_dol` installs `zdClampFloor` at `0x8002AE68` (hooked at `0x8004D5AC` after `ZoidGround`) and upgrades `zoid_171.prm` front spheres to `mode = 2`.
 - BL has 46 mission files, VS3 has 34.
 
 ## Scene tails & progression (decoded from `zoidR.elf`)

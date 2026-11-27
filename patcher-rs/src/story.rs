@@ -195,29 +195,205 @@ pub fn patch_person_names(vs3_person: &[u8], bl_person: &[u8]) -> Vec<u8> {
     out
 }
 
-/// Populate `demoPicMan[98..173]` (`0x8014BD14` in VS3 `main.dol`, which has 395 `i32` slots
-/// with `98..395` unused and set to `-1`) so appended BL portraits render their pilot nameplates.
-pub fn patch_dol(vs3_dol: &mut [u8]) -> io::Result<()> {
-    const DEMO_PIC_MAN_VA: u32 = 0x8014_BD14;
-    let mut file_off = None;
+fn va_to_dol(dol: &[u8], va: u32, len: usize) -> io::Result<usize> {
     for i in 0..18 {
-        let (fo, sa, sz) = (be32(vs3_dol, i * 4), be32(vs3_dol, 0x48 + i * 4), be32(vs3_dol, 0x90 + i * 4));
-        if fo != 0 && DEMO_PIC_MAN_VA >= sa && DEMO_PIC_MAN_VA < sa.saturating_add(sz) {
-            file_off = Some((fo + (DEMO_PIC_MAN_VA - sa)) as usize);
-            break;
+        let (fo, sa, sz) = (be32(dol, i * 4), be32(dol, 0x48 + i * 4), be32(dol, 0x90 + i * 4));
+        if fo != 0 && va >= sa && va.saturating_add(len as u32) <= sa.saturating_add(sz) {
+            let off = (fo + (va - sa)) as usize;
+            if off + len <= dol.len() { return Ok(off); }
         }
     }
-    let base = file_off.ok_or_else(|| io::Error::other("demoPicMan not found in VS3 DOL"))?;
-    let start = base + (VS3_PORTRAIT_BASE as usize) * 4;
-    let end = start + BL_PORTRAIT_COUNT * 4;
-    if end > vs3_dol.len() {
-        return Err(io::Error::other("demoPicMan table out of bounds in VS3 DOL"));
+    Err(io::Error::other(format!("VA 0x{:08X} out of bounds in VS3 DOL", va)))
+}
+
+fn ppc_b(from_va: u32, to_va: u32, lk: bool) -> u32 {
+    let disp = (to_va as i64 - from_va as i64) as i32;
+    0x4800_0000 | ((disp as u32) & 0x03FF_FFFC) | u32::from(lk)
+}
+
+fn ppc_bc(op_bo_bi: u32, from_idx: usize, to_idx: usize) -> u32 {
+    let disp = ((to_idx as isize - from_idx as isize) * 4) as i16;
+    op_bo_bi | ((disp as u16 as u32) & 0xFFFC)
+}
+
+/// Assemble `zdClampFloor(Zoid* r3)` at `cave_va` (`0x8002AE68`).
+/// Runs at the end of `ZoidAllMove` right after `ZoidGround` to prevent high-speed dive attacks
+/// (such as Rayse Tiger's Jump Melee Dive, `anim 65/66`) from tunneling below single-sided `.xb`
+/// floor triangles and falling forever.
+fn build_zd_clamp_floor(cave_va: u32) -> Vec<u32> {
+    const ZD_COL_POS_Y: u32 = 0x8003_0434;
+    const ZD_SET_XYZ: u32 = 0x8003_0FC0;
+    const S_MAKE_MATRIX: u32 = 0x8003_6E78;
+    const ZD_UPDATE_BONES: u32 = 0x8003_2D08;
+    const BEQ: u32 = 0x4182_0000;
+    const BNE: u32 = 0x4082_0000;
+    const BGE: u32 = 0x4080_0000; // branch if >= (and on NaN unordered, since FL == 0)
+
+    let mut c = Vec::with_capacity(68);
+    let mut fix_exit = Vec::new();
+    let mut fix_upd = Vec::new();
+
+    c.extend_from_slice(&[
+        0x7C08_02A6, // mflr r0
+        0x9001_0004, // stw  r0, 0x04(r1)
+        0x9421_FFE0, // stwu r1, -0x20(r1)
+        0x93E1_001C, // stw  r31, 0x1C(r1)
+        0x7C7F_1B78, // mr   r31, r3
+        0x281F_0000, // cmplwi r31, 0
+    ]);
+    fix_exit.push((c.len(), BEQ)); c.push(0);
+    c.push(0x801F_0040); // lwz r0, 0x40(r31) (root JObj)
+    c.push(0x2800_0000); // cmplwi r0, 0
+    fix_exit.push((c.len(), BEQ)); c.push(0);
+
+    // Exempt intentional sub-floor states: 42 (ZoidActDead), 43 (ZoidActDeath), 51 (zdModeGene)
+    c.push(0x801F_1DA8); // lwz r0, 0x1DA8(r31) (action)
+    for act in [42u16, 43, 51] {
+        c.push(0x2C00_0000 | act as u32); // cmpwi r0, act
+        fix_exit.push((c.len(), BEQ)); c.push(0);
     }
+
+    // Query walkable floor triangle closest in Y to zoid->pos (0x1C18)
+    c.extend_from_slice(&[
+        0x3800_FFFF, // li   r0, -1
+        0xB001_0008, // sth  r0, 0x08(r1) (polyIdx = 0xFFFF)
+        0x387F_1C18, // addi r3, r31, 0x1C18 (&zoid->pos)
+        0x3881_0008, // addi r4, r1, 0x08 (&polyIdx)
+    ]);
+    let call_col_va = cave_va + (c.len() as u32) * 4;
+    c.push(ppc_b(call_col_va, ZD_COL_POS_Y, true));
+    c.push(0xA001_0008); // lhz r0, 0x08(r1)
+    c.push(0x2800_FFFF); // cmplwi r0, 0xFFFF
+    fix_exit.push((c.len(), BEQ)); c.push(0);
+
+    // Compare zoid->pos.y (f0) against floor_y (f1)
+    c.push(0xC01F_1C1C); // lfs f0, 0x1C1C(r31)
+    c.push(0xFC00_0840); // fcmpo cr0, f0, f1
+    fix_exit.push((c.len(), BGE)); c.push(0);
+
+    // Below floor: clamp pos.y & ground_y to floor_y, mark grounded, clamp negative vertical speeds
+    c.extend_from_slice(&[
+        0xD03F_1C1C, // stfs f1, 0x1C1C(r31) (pos.y = floor_y)
+        0xD03F_1BF0, // stfs f1, 0x1BF0(r31) (ground_y = floor_y)
+        0x3800_0001, // li   r0, 1
+        0x901F_1C08, // stw  r0, 0x1C08(r31) (on_ground = 1)
+        0xC042_86B8, // lfs  f2, -0x7948(r2) (0.0f @ 0x80389C78)
+        0xC01F_1D34, // lfs  f0, 0x1D34(r31) (vy_atk)
+        0xFC00_1040, // fcmpo cr0, f0, f2
+        0x4080_0008, // bge  +8
+        0xD05F_1D34, // stfs f2, 0x1D34(r31)
+        0xC01F_1D00, // lfs  f0, 0x1D00(r31) (vy_move)
+        0xFC00_1040, // fcmpo cr0, f0, f2
+        0x4080_0008, // bge  +8
+        0xD05F_1D00, // stfs f2, 0x1D00(r31)
+    ]);
+
+    // If descending in ZoidJump (action 1 or 2, substate < 48, vy_jump < 0), trigger landing (48)
+    c.extend_from_slice(&[
+        0x801F_1DA8, // lwz   r0, 0x1DA8(r31)
+        0x2C00_0001, // cmpwi r0, 1
+        0x4182_000C, // beq   +12 (chk_jmp)
+        0x2C00_0002, // cmpwi r0, 2
+    ]);
+    fix_upd.push((c.len(), BNE)); c.push(0);
+    // chk_jmp:
+    c.push(0x801F_1DC0); // lwz   r0, 0x1DC0(r31) (jump substate)
+    c.push(0x2C00_0030); // cmpwi r0, 48
+    fix_upd.push((c.len(), BGE)); c.push(0);
+    c.push(0xC01F_1DCC); // lfs   f0, 0x1DCC(r31) (vy_jump)
+    c.push(0xFC00_1040); // fcmpo cr0, f0, f2
+    fix_upd.push((c.len(), BGE)); c.push(0);
+    c.extend_from_slice(&[
+        0x3800_0030, // li  r0, 48 (ZoidJump landing state)
+        0x901F_1DC0, // stw r0, 0x1DC0(r31)
+        0x3800_003C, // li  r0, 60 (landing timer)
+        0x901F_1DD4, // stw r0, 0x1DD4(r31)
+    ]);
+
+    let upd_idx = c.len();
+    c.push(0x7FE3_FB78); // mr r3, r31
+    let call_xyz_va = cave_va + (c.len() as u32) * 4;
+    c.push(ppc_b(call_xyz_va, ZD_SET_XYZ, true));
+    c.push(0x807F_0040); // lwz r3, 0x40(r31)
+    let call_mtx_va = cave_va + (c.len() as u32) * 4;
+    c.push(ppc_b(call_mtx_va, S_MAKE_MATRIX, true));
+    c.push(0x7FE3_FB78); // mr r3, r31
+    let call_bones_va = cave_va + (c.len() as u32) * 4;
+    c.push(ppc_b(call_bones_va, ZD_UPDATE_BONES, true));
+
+    let exit_idx = c.len();
+    c.extend_from_slice(&[
+        0x83E1_001C, // lwz  r31, 0x1C(r1)
+        0x3821_0020, // addi r1, r1, 0x20
+        0x8001_0004, // lwz  r0, 0x04(r1)
+        0x7C08_03A6, // mtlr r0
+        0x4E80_0020, // blr
+    ]);
+
+    for (idx, cond) in fix_upd { c[idx] = ppc_bc(cond, idx, upd_idx); }
+    for (idx, cond) in fix_exit { c[idx] = ppc_bc(cond, idx, exit_idx); }
+    c
+}
+
+/// Patch VS3 `main.dol`:
+/// 1. Populate `demoPicMan[98..173]` (`0x8014BD14`) so appended BL portraits show pilot nameplates.
+/// 2. Install `zdClampFloor` in unused devkit routine `TEA_usbmccControlChk` (`0x8002AE60..0x8002B00C`)
+///    and hook the `dummyFunc` call after `ZoidGround` in `ZoidAllMove` (`0x8004D5AC..0x8004D5B0`).
+pub fn patch_dol(vs3_dol: &mut [u8]) -> io::Result<()> {
+    const DEMO_PIC_MAN_VA: u32 = 0x8014_BD14;
+    let base = va_to_dol(vs3_dol, DEMO_PIC_MAN_VA, (VS3_PORTRAIT_BASE as usize + BL_PORTRAIT_COUNT) * 4)?;
+    let start = base + (VS3_PORTRAIT_BASE as usize) * 4;
     for (i, &pilot) in BL_PORTRAIT_PILOTS.iter().enumerate() {
         let o = start + i * 4;
         vs3_dol[o..o + 4].copy_from_slice(&pilot.to_be_bytes());
     }
+
+    const USB_STUB_VA: u32 = 0x8002_AE60;
+    const CAVE_VA: u32 = 0x8002_AE68;
+    const USB_MAX_BYTES: usize = 0x1AC; // 0x8002AE60..0x8002B00C
+    const HOOK_VA: u32 = 0x8004_D5AC;
+
+    let cave_code = build_zd_clamp_floor(CAVE_VA);
+    let total_cave_bytes = 8 + cave_code.len() * 4;
+    if total_cave_bytes > USB_MAX_BYTES {
+        return Err(io::Error::other("zdClampFloor exceeds TEA_usbmccControlChk size"));
+    }
+    let stub_off = va_to_dol(vs3_dol, USB_STUB_VA, total_cave_bytes)?;
+    let hook_off = va_to_dol(vs3_dol, HOOK_VA, 8)?;
+    if be32(vs3_dol, stub_off) != 0x7C08_02A6
+        || be32(vs3_dol, hook_off) != 0x3862_8D94
+        || be32(vs3_dol, hook_off + 4) != 0x4BFC_C6AD
+    {
+        return Err(io::Error::other("unexpected VS3 DOL instructions at floor-clamp hook site"));
+    }
+
+    // Stub TEA_usbmccControlChk entry with `li r3, 0; blr`, then write zdClampFloor at +8
+    put_be32(vs3_dol, stub_off, 0x3860_0000);
+    put_be32(vs3_dol, stub_off + 4, 0x4E80_0020);
+    for (i, &w) in cave_code.iter().enumerate() {
+        put_be32(vs3_dol, stub_off + 8 + i * 4, w);
+    }
+
+    // Replace `addi r3, r2, -0x726C; bl dummyFunc` after `bl ZoidGround` with `mr r3, r31; bl zdClampFloor`
+    put_be32(vs3_dol, hook_off, 0x7FE3_FB78);
+    put_be32(vs3_dol, hook_off + 4, ppc_b(HOOK_VA + 4, CAVE_VA, true));
     Ok(())
+}
+
+/// Upgrade Rayse Tiger (`zoid_171.prm`) chest (`0x00`) and front-leg (`0x38`, `0x40`) ground
+/// collision spheres from mode `1` (overlap-only) to mode `2` (segment raycast), matching
+/// Blade Liger (`zoid_013`), Liger Zero (`zoid_021`), and Whitz Tiger (`zoid_179`).
+pub fn patch_rayse_tiger_prm(prm: &[u8]) -> io::Result<Vec<u8>> {
+    if prm.len() < 0x100 {
+        return Err(io::Error::other("zoid_171.prm too small"));
+    }
+    let mut out = prm.to_vec();
+    for off in [0x00usize, 0x38, 0x40] {
+        if be32(&out, off) == 1 {
+            put_be32(&mut out, off, 2);
+        }
+    }
+    Ok(out)
 }
 
 /// etc/demo/text.BIN: u32 offset table (count = first offset / 4), then strings back to back.
@@ -283,10 +459,26 @@ pub fn port_scene(bl_scene: &[u8], bl_text: &[Vec<u8>], vs3_slot: &[u8], text: &
     join_scene(&recs, &vs3_tail)
 }
 
-/// BL mission files (12828 bytes) share VS3's layout (13056 bytes) except for a short trailing block.
+/// Convert a BL mission file (`0x321C` bytes) to VS3's `0x3300`-byte layout, populating the
+/// Vs. III stage height/flight bounds block (`0x3248..0x3258`) so knockback ceilings and AI
+/// flying Zoids have proper altitude limits instead of zero.
 pub fn port_mission(bl: &[u8], vs3_len: usize) -> Vec<u8> {
     let mut d = bl.to_vec();
     d.resize(vs3_len.max(bl.len()), 0);
+    if d.len() >= 0x3258 {
+        let mp_end = d[..16.min(d.len())].iter().position(|&b| b == 0).unwrap_or(0);
+        let map_name = std::str::from_utf8(&d[..mp_end]).unwrap_or("");
+        let limit_l: i32 = match map_name {
+            "map_p22" => -240,
+            "map_p29" => -100,
+            "map_p18" | "map_p03" => -50,
+            _ => -15,
+        };
+        d[0x3248..0x324C].copy_from_slice(&200i32.to_be_bytes());     // limitHighH (ceiling)
+        d[0x324C..0x3250].copy_from_slice(&limit_l.to_be_bytes());    // limitHighL (trench floor)
+        d[0x3250..0x3254].copy_from_slice(&120i32.to_be_bytes());     // AI flight max altitude
+        d[0x3254..0x3258].copy_from_slice(&40i32.to_be_bytes());      // AI flight min altitude
+    }
     d
 }
 
@@ -297,9 +489,8 @@ pub struct Inputs<'a> {
     pub get_bl: &'a mut dyn FnMut(&str) -> io::Result<Option<Vec<u8>>>,
 }
 
-/// Test 2: append all 75 BL story portraits into VS3 `demosell00.dat` and port 5 BL scenes +
-/// missions into VS3's linear opening slots (002..006) to verify Shoma, Kouki, Tita, Zan,
-/// Reiner, Reika, Leviathe, Albane, and Republic/Empire Operators.
+/// Test 5: BL story portraits + nameplates, Rayse Tiger / global floor-clipping fix, and 5 BL
+/// opening scenes + missions in slots `002..006`.
 pub fn experiment(vs3_text_path: String, inp: Inputs) -> io::Result<Vec<(String, Vec<u8>)>> {
     let mut text = parse_text(inp.vs3_text);
     let bl_text = parse_text(inp.bl_text);
@@ -314,6 +505,9 @@ pub fn experiment(vs3_text_path: String, inp: Inputs) -> io::Result<Vec<(String,
 
     if let (Some((pp, vp)), Some(bp)) = ((inp.get_vs3)("etc/n_Person.dat")?, (inp.get_bl)("etc/n_Person.dat")?) {
         ch.push((pp, patch_person_names(&vp, &bp)));
+    }
+    if let Some((prm_path, prm_data)) = (inp.get_vs3)("zoid/IDP/zoid_171.prm")? {
+        ch.push((prm_path, patch_rayse_tiger_prm(&prm_data)?));
     }
 
     // (BL scene/mission, VS3 slot): linear 002 -> 003 -> 004 -> 005 -> 006 sequence
